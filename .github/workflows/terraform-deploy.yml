@@ -1,0 +1,77 @@
+name: "Terraform Deploy"
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: write
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      # The additional raw and endraw escape tags are needed as backstage uses the same replacement mechanism than
+      # github actions. We use them as a workaround to avoid the substitution by the backstage
+      # templating engine as we want to use the secrets from the repository in the github actions workflow.
+      CONFLUENT_CLOUD_API_KEY: ${{ secrets.CONFLUENT_CLOUD_API_KEY }}
+      CONFLUENT_CLOUD_API_SECRET: ${{ secrets.CONFLUENT_CLOUD_API_SECRET }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.0.0
+
+      - name: Initialize Terraform
+        working-directory: .
+        run: terraform init
+
+      - name: Validate Terraform
+        working-directory: .
+        run: terraform validate
+
+      - name: Plan Terraform
+        working-directory: .
+        run: terraform plan -out=tfplan
+
+      - name: Apply Terraform
+        working-directory: .
+        run: terraform apply -auto-approve tfplan
+        
+      - name: Extract Terraform Outputs and Create Documentation
+        run: |
+          # Extract only the actual output values
+          set -e
+          # Save output to temporary file and extract just the actual values
+          terraform output -raw environment_id > env_id.txt
+          terraform output -raw environment_name > env_name.txt
+          
+          # Read the clean values
+          ENV_ID=$(cat env_id.txt)
+          ENV_NAME=$(cat env_name.txt)
+          
+          # Verify outputs were captured
+          echo "Environment ID: $ENV_ID"
+          echo "Environment Name: $ENV_NAME"
+          
+          # Create documentation files
+          mkdir -p docs
+          
+          cat > docs/environment-details.md << EOL
+          # Environment Details
+          
+          ## Environment Information
+          
+          - **Name**: ${ENV_NAME}
+          - **Environment ID**: ${ENV_ID}
+          EOL
+          
+          # Commit and push documentation
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+          git add docs/
+          git commit -m "Update environment documentation [skip ci]"
+          git push
